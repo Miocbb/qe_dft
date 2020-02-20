@@ -1,0 +1,21 @@
+# build dir and files.
+*build*/
+
+# vscode
+*.vscode/
+
+# googletest
+googletest/
+
+# test data output file
+**/test/**/*.xyz
+**/test/**/*.bin
+**/test/**/*.inp
+**/test/**/*.out
+**/test/*.sh
+
+# extern
+extern*/
+
+# doxygen
+**/doxygen*/

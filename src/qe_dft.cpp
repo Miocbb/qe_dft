@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <sstream>
 #include <utility>
 
 namespace qe_dft {
@@ -57,6 +58,13 @@ OrbIndexPair Qedft::get_corresponding_orbitals(size_t index)
 {
     const size_t nbasis = S_->rows();
 
+    if (index >= nbasis) {
+        std::stringstream msg;
+        msg << "Input index = " << index
+            << ", which exceeds the basis dimension.";
+        throw std::runtime_error(msg.str());
+    }
+
     vector<size_t> rst_idx_vec;
     for (size_t s = 0; s < 2; ++s) {
         Matrix orb_overlap =
@@ -110,6 +118,5 @@ vector<ExciEnergyPair> Qedft::excitation_energies(vector<size_t> indices)
     }
     return rst;
 }
-
 
 } // namespace qe_dft

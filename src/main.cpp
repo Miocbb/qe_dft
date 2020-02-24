@@ -3,6 +3,7 @@
 #include "qe_dft.h"
 
 #include <Eigen/Dense>
+#include <algorithm>
 #include <boost/filesystem.hpp>
 #include <boost/program_options.hpp>
 #include <exception>
@@ -10,6 +11,7 @@
 #include <memory>
 #include <stdio.h>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace po = boost::program_options;
@@ -18,11 +20,109 @@ using Matrix = Eigen::MatrixXd;
 using SharedMatrix = std::shared_ptr<Matrix>;
 using std::vector;
 
-static const double au2eV = 27.2116;
+static const double au2eV = 27.211324570273;
+
+namespace {
+
+void remove_duplicates(vector<size_t> &in)
+{
+    std::unordered_set<size_t> s(in.begin(), in.end());
+    in.assign(s.begin(), s.end());
+}
+
+/**
+ * @brief split string with given delimeter.
+ * @param [in] str: input string to be splitted.
+ * @param [in] delim: delimeter. Default `delim = ','`.
+ * @return vector<string>: the splitted string.
+ */
+vector<string> str_split(const string &str, const char delim = ',')
+{
+    vector<string> str_split;
+    std::stringstream str_stream(str + std::string(1, delim));
+    std::string word;
+    while (std::getline(str_stream, word, delim)) {
+        str_split.push_back(word);
+    }
+    return str_split;
+}
+
+bool str_find(const string &str, const string &sub_str)
+{
+    size_t found = str.find(sub_str);
+    return found != std::string::npos;
+}
+
+/**
+ * @brief Parse the string expression of excitation to give all the orbital
+ * indices.
+ *
+ * @param [in] index_expr: excitation indices expression. Two type of
+ * expressions are supported. (1). "n" means the HOMO->HOMO+n excitation; (2)
+ * "n1-n2" means all the excitation from HOMO->HOMO+n1 to HOMO->HOMO+n2. Each
+ * expression is seperated by comma. You can make "1, 2, 2-6", which will be
+ * understand as "1, 2, 3, 4, 5, 6".
+ * @param [in] nocc: number of occupied orbitals.
+ *
+ * @return vector<size_t>: the orbital indices (starting from zero) related to
+ * the expressed excitations in an increasing order. The duplicated indices are
+ * removed.
+ */
+vector<size_t> parse_exci_index(const string &index_expr, size_t nocc)
+{
+    vector<string> index_expr_split = str_split(index_expr, ',');
+    vector<size_t> rst;
+    for (string idx_i : index_expr_split) {
+        if (str_find(idx_i, "-")) {
+            vector<string> range;
+            size_t begin = 0;
+            size_t end = 0;
+            try {
+                range = str_split(idx_i, '-');
+                begin = std::stoi(range[0]);
+                end = std::stoi(range[1]);
+            } catch (...) {
+                throw std::runtime_error("Cannot parse excitation index "
+                                         "expression: whole expression=" +
+                                         index_expr + ". Failed at: " + idx_i);
+            }
+            if (begin > end || begin <= 0) {
+                throw std::runtime_error(
+                    "Invalid excitation index expression: whole expression=" +
+                    index_expr + ". Failed at: " + idx_i);
+            }
+            for (size_t i = begin; i <= end; ++i) {
+                rst.push_back(i);
+            }
+        } else {
+            size_t idx = 0;
+            try {
+                idx = std::stoi(idx_i);
+            } catch (const std::exception &) {
+                throw std::runtime_error("Cannot parse excitation index "
+                                         "expression: whole expression=" +
+                                         index_expr + ". Failed at: " + idx_i);
+            }
+            if (idx <= 0) {
+                throw std::runtime_error(
+                    "Invalid excitation index expression: whole expression=" +
+                    index_expr + ". Failed at: " + idx_i);
+            }
+            rst.push_back(std::stoi(idx_i));
+        }
+    }
+    remove_duplicates(rst);
+    std::sort(rst.begin(), rst.end());
+    for (size_t &i : rst) {
+        i = nocc - 1 + i;
+    }
+    return rst;
+}
+
+} // namespace
 
 int main(int ac, char *av[])
 {
-    std::string appName = boost::filesystem::basename(av[0]);
 
     string file_S;        // AO overlap matrix file.
     string file_C_ref;    // CO coefficient matrix file for N-system.
@@ -31,12 +131,17 @@ int main(int ac, char *av[])
     string index_options;
     size_t nocc;
 
+    std::string appName = boost::filesystem::basename(av[0]);
     po::options_description args("QE-DFT (quasi-particle energy from DFT) "
                                  "calculation for excited state problems.");
     args.add_options()("help,h", "Produce help massage.")(
-        "index", po::value<string>(&index_options)->default_value("all"),
-        "Indices that to find the corresponding orbitals. Comma separated. "
-        "\"a-b\" means \"a, a+1, ..., b\".")(
+        "index", po::value<string>(&index_options)->default_value("1"),
+        "Excitation indices expression. Two type of expressions are "
+        "supported.(1). \"n\" means the HOMO->HOMO+n excitation; (2) \"n1-n2\" "
+        "means all the excitation from HOMO->HOMO+n1 to HOMO->HOMO+n2. Each "
+        "expression is ONLY seperated by comma.You can make \"1,2,2-6\", which "
+        "will "
+        "be understand as \"1,2,3,4,5,6\".")(
         "nocc", po::value<size_t>(&nocc)->required(),
         "number of occupied orbital.")(
         "file_CO_ref", po::value<string>(&file_C_ref)->required(),
@@ -112,7 +217,7 @@ int main(int ac, char *av[])
     }
 
 #ifdef DEBUG_PRINT
-    std::cout << "Overlap matrix:\n" << S << std::endl;
+    std::cout << "Overlap matrix:\n" << *S << std::endl;
     std::cout << "CO coef matrix N system: spin=0\n" << *C_N[0] << std::endl;
     std::cout << "CO coef matrix N system: spin=1\n" << *C_N[1] << std::endl;
     std::cout << "CO coef matrix N-1 system: spin=0\n"
@@ -123,22 +228,29 @@ int main(int ac, char *av[])
               << *orbE_N_1 << std::endl;
 #endif
 
+    vector<size_t> indices = parse_exci_index(index_options, nocc);
+    std::cout << "Excited orbitals: \n";
+    for (size_t i = 0; i < indices.size(); ++i) {
+        std::cout << indices[i] + 1 << ",";
+    }
+    std::cout << "\n";
+
     qe_dft::Qedft orbitals(nocc, S, C_N, C_N_1, orbE_N_1);
-    std::vector<size_t> indices = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    // std::vector<size_t> indices = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
     auto matched_index_pair = orbitals.get_corresponding_orbitals(indices);
     for (size_t i = 0; i < indices.size(); ++i) {
         printf("Input index=%zu, find index: alpha=%zu, beta=%zu\n", indices[i],
                matched_index_pair[i].first, matched_index_pair[i].second);
     }
 
-    std::vector<size_t> exci_idx(indices.begin() + nocc, indices.end());
-    auto exciE = orbitals.excitation_energies(exci_idx);
-    for (size_t i = 0; i < exci_idx.size(); ++i) {
+    // std::vector<size_t> exci_idx(indices.begin() + nocc, indices.end());
+    auto exciE = orbitals.excitation_energies(indices);
+    for (size_t i = 0; i < indices.size(); ++i) {
         printf("Excitation: %zu->%zu. Used orbital: %zu->(alpha=%zu, "
                "beta=%zu). Singlet = %.3f (eV), Triplet = %.3f (eV)\n",
-               nocc, exci_idx[i] + 1,
-               nocc, matched_index_pair[i + nocc].first + 1,
-               matched_index_pair[i + nocc].second + 1,
-               exciE[i].first * au2eV, exciE[i].second * au2eV);
+               nocc, indices[i] + 1, nocc,
+               matched_index_pair[i].first + 1,
+               matched_index_pair[i].second + 1, exciE[i].first * au2eV,
+               exciE[i].second * au2eV);
     }
 }

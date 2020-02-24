@@ -6,9 +6,9 @@
 
 namespace qe_dft {
 
-Qedft::Qedft(SharedMatrix S, vector<SharedMatrix> C_N,
+Qedft::Qedft(size_t nocc, SharedMatrix S, vector<SharedMatrix> C_N,
              vector<SharedMatrix> C_N_1, SharedMatrix eig_N_1)
-    : S_{S}, C_N_{C_N}, C_N_1_{C_N_1}, eig_N_1_{eig_N_1}
+    : nocc_{nocc}, S_{S}, C_N_{C_N}, C_N_1_{C_N_1}, eig_N_1_{eig_N_1}
 {
     // check unrestricted calculation.
     if (C_N_.size() != 2) {
@@ -84,5 +84,32 @@ vector<OrbIndexPair> Qedft::get_corresponding_orbitals(vector<size_t> indices)
     }
     return rst;
 }
+
+ExciEnergyPair Qedft::excitation_energies(size_t index)
+{
+    if (index < nocc_) {
+        throw std::runtime_error("Wrong excitation index. QEDFT only cover "
+                                 "HOMO -> LUMO + (i) excitations.");
+    }
+
+    auto idx_pair = get_corresponding_orbitals(index);
+    const double ref = eig_N_1_->row(1)[nocc_ - 1]; // beta lumo
+    const double exci_a = eig_N_1_->row(0)[idx_pair.first];
+    const double exci_b = eig_N_1_->row(1)[idx_pair.second];
+
+    double exci_S = 2 * exci_b - exci_a - ref;
+    double exci_T = exci_a - ref;
+    return ExciEnergyPair(exci_S, exci_T);
+}
+
+vector<ExciEnergyPair> Qedft::excitation_energies(vector<size_t> indices)
+{
+    vector<ExciEnergyPair> rst;
+    for (auto idx : indices) {
+        rst.push_back(excitation_energies(idx));
+    }
+    return rst;
+}
+
 
 } // namespace qe_dft

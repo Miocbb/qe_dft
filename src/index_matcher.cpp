@@ -7,18 +7,23 @@
 namespace qe_dft {
 
 Qedft::Qedft(SharedMatrix S, vector<SharedMatrix> C_N,
-             vector<SharedMatrix> C_N_1)
-    : S_{S}, C_N_{C_N}, C_N_1_{C_N_1}
+             vector<SharedMatrix> C_N_1, SharedMatrix eig_N_1)
+    : S_{S}, C_N_{C_N}, C_N_1_{C_N_1}, eig_N_1_{eig_N_1}
 {
     // check unrestricted calculation.
     if (C_N_.size() != 2) {
         throw std::runtime_error("miss one spin of CO coefficient matrix "
                                  "for N reference system.");
     }
-    if (C_N_1.size() != 2) {
+    if (C_N_1_.size() != 2) {
         throw std::runtime_error("miss one spin of CO coefficient matrix "
                                  "for N-1 reference system.");
     }
+    if (eig_N_1_->rows() != 2 && eig_N_1_->cols() != S_->rows()) {
+        throw std::runtime_error(
+            "miss one spin of eigenvalues for N-1 reference system.");
+    }
+
     // check close shell N system.
     Matrix diff = (*C_N_[0]) - (*C_N_[1]);
     if (!diff.isZero(1e-8)) {
@@ -63,9 +68,9 @@ OrbIndexPair Qedft::get_corresponding_orbitals(size_t index)
         rst_idx_vec.push_back(idx);
 
 #ifdef DEBUG_PRINT
-    std::cout << "Orbital [" << index
-              << "] overlap with N-1 all alpha orbitals:\n"
-              << orb_overlap.transpose() << std::endl;
+        std::cout << "Orbital [" << index
+                  << "] overlap with N-1 all alpha orbitals:\n"
+                  << orb_overlap.transpose() << std::endl;
 #endif
     }
     return OrbIndexPair(rst_idx_vec[0], rst_idx_vec[1]);

@@ -23,6 +23,7 @@ class Qedft {
     SharedMatrix S_;
     vector<SharedMatrix> C_N_;
     vector<SharedMatrix> C_N_1_;
+    SharedMatrix eig_N_1_;
 
     bool is_same_dimension(const Matrix &A, const Matrix &B)
     {
@@ -30,7 +31,8 @@ class Qedft {
     }
 
   public:
-    Qedft(SharedMatrix S, vector<SharedMatrix> C_N, vector<SharedMatrix> C_N_1);
+    Qedft(SharedMatrix S, vector<SharedMatrix> C_N, vector<SharedMatrix> C_N_1,
+          SharedMatrix eig_N_1);
 
     /**
      * @brief Given one orbital index in N system, find the corresponding

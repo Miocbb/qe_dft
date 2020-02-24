@@ -14,7 +14,6 @@
 #include <unordered_set>
 #include <vector>
 
-namespace po = boost::program_options;
 using std::string;
 using Matrix = Eigen::MatrixXd;
 using SharedMatrix = std::shared_ptr<Matrix>;
@@ -23,7 +22,11 @@ using std::vector;
 static const double au2eV = 27.211324570273;
 
 namespace {
+namespace po = boost::program_options;
 
+/**
+ * @brief remove duplicated elements in the vector in place.
+ */
 void remove_duplicates(vector<size_t> &in)
 {
     std::unordered_set<size_t> s(in.begin(), in.end());
@@ -119,48 +122,38 @@ vector<size_t> parse_exci_index(const string &index_expr, size_t nocc)
     return rst;
 }
 
-} // namespace
-
-int main(int ac, char *av[])
+po::variables_map parse_args(int ac, char *av[])
 {
-
-    string file_S;        // AO overlap matrix file.
-    string file_C_ref;    // CO coefficient matrix file for N-system.
-    string file_C_remove; // CO coefficient matrix file for N-1 system.
-    string file_OrbE_N_1; // Orbital energy file for N-1 system.
-    string index_options;
-    size_t nocc;
-
     std::string appName = boost::filesystem::basename(av[0]);
     po::options_description args("QE-DFT (quasi-particle energy from DFT) "
                                  "calculation for excited state problems.");
     args.add_options()("help,h", "Produce help massage.")(
-        "index", po::value<string>(&index_options)->default_value("1"),
+        "index", po::value<string>()->default_value("1"),
         "Excitation indices expression. Two type of expressions are "
         "supported.(1). \"n\" means the HOMO->HOMO+n excitation; (2) \"n1-n2\" "
         "means all the excitation from HOMO->HOMO+n1 to HOMO->HOMO+n2. Each "
         "expression is ONLY seperated by comma.You can make \"1,2,2-6\", which "
         "will "
         "be understand as \"1,2,3,4,5,6\".")(
-        "nocc", po::value<size_t>(&nocc)->required(),
+        "nocc", po::value<size_t>()->required(),
         "number of occupied orbital.")(
-        "file_CO_ref", po::value<string>(&file_C_ref)->required(),
+        "file_CO_N", po::value<string>()->required(),
         "Binary file generated from QM4D for CO coefficient matrix from "
         "N-electron system.")(
-        "file_CO_remove", po::value<string>(&file_C_remove)->required(),
+        "file_CO_Nrm", po::value<string>()->required(),
         "Binary file generated from QM4D for CO coefficient matrix from "
         "(N-1)-electron system.")(
-        "file_S", po::value<string>(&file_S)->required(),
+        "file_S", po::value<string>()->required(),
         "Binary file generated from QM4D for AO overlap matrix.")(
-        "file_eig_N_1", po::value<string>(&file_OrbE_N_1)->required(),
+        "file_eig_Nrm", po::value<string>()->required(),
         "Binary file generated from QM4D for orbital energy matrix.");
 
     po::positional_options_description pst_args;
     pst_args.add("nocc", 1);
-    pst_args.add("file_CO_ref", 1);
-    pst_args.add("file_CO_remove", 1);
+    pst_args.add("file_CO_N", 1);
+    pst_args.add("file_CO_Nrm", 1);
     pst_args.add("file_S", 1);
-    pst_args.add("file_eig_N_1", 1);
+    pst_args.add("file_eig_Nrm", 1);
 
     po::variables_map vm;
     try {
@@ -181,12 +174,35 @@ int main(int ac, char *av[])
     } catch (...) {
         throw;
     }
+    return vm;
+}
+
+} // local namespace
+
+int main(int ac, char *av[])
+{
+    // parse arguments.
+    auto vm = parse_args(ac, av);
+
+    // load data
+    string file_S = vm["file_S"].as<string>();
+    string file_C_ref = vm["file_CO_N"].as<string>();
+    string file_C_remove  = vm["file_CO_Nrm"].as<string>();
+    string file_OrbE_N_1 = vm["file_eig_Nrm"].as<string>();
+    string index_options = vm["index"].as<string>();
+    const size_t nocc = vm["nocc"].as<size_t>();
+
+    vector<size_t> indices = parse_exci_index(index_options, nocc);
+    std::cout << "Excited orbitals: \n";
+    for (size_t i = 0; i < indices.size(); ++i) {
+        std::cout << indices[i] + 1 << ",";
+    }
+    std::cout << "\n";
 
     SharedMatrix S;             // AO overlap matrix.
     vector<SharedMatrix> C_N;   // CO coefficient matrix for N-system.
     vector<SharedMatrix> C_N_1; // CO coefficient matrix for N-1 system.
     SharedMatrix orbE_N_1;
-
     try {
         S = read_matrices_from_txt(file_S)[0];
         C_N = read_matrices_from_txt(file_C_ref);
@@ -228,29 +244,22 @@ int main(int ac, char *av[])
               << *orbE_N_1 << std::endl;
 #endif
 
-    vector<size_t> indices = parse_exci_index(index_options, nocc);
-    std::cout << "Excited orbitals: \n";
-    for (size_t i = 0; i < indices.size(); ++i) {
-        std::cout << indices[i] + 1 << ",";
-    }
-    std::cout << "\n";
-
+    // do QE-DFT calculation.
     qe_dft::Qedft orbitals(nocc, S, C_N, C_N_1, orbE_N_1);
-    // std::vector<size_t> indices = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    // find corrsponding indices in N-1 system for the N system excitation.
     auto matched_index_pair = orbitals.get_corresponding_orbitals(indices);
     for (size_t i = 0; i < indices.size(); ++i) {
         printf("Input index=%zu, find index: alpha=%zu, beta=%zu\n", indices[i],
                matched_index_pair[i].first, matched_index_pair[i].second);
     }
-
-    // std::vector<size_t> exci_idx(indices.begin() + nocc, indices.end());
-    auto exciE = orbitals.excitation_energies(indices);
+    // calculate excitation energy with the corresponding indices.
+    auto exciE_pair = orbitals.excitation_energies(indices);
     for (size_t i = 0; i < indices.size(); ++i) {
         printf("Excitation: %zu->%zu. Used orbital: %zu->(alpha=%zu, "
                "beta=%zu). Singlet = %.3f (eV), Triplet = %.3f (eV)\n",
                nocc, indices[i] + 1, nocc,
                matched_index_pair[i].first + 1,
-               matched_index_pair[i].second + 1, exciE[i].first * au2eV,
-               exciE[i].second * au2eV);
+               matched_index_pair[i].second + 1, exciE_pair[i].first * au2eV,
+               exciE_pair[i].second * au2eV);
     }
 }

@@ -1,5 +1,5 @@
-#ifndef _QE_DFT_INDEX_MATCHER_H_
-#define _QE_DFT_INDEX_MATCHER_H_
+#ifndef _QE_DFT_SRC_QE_DFT_H_
+#define _QE_DFT_SRC_QE_DFT_H_
 
 #include <Eigen/Dense>
 #include <memory>
@@ -57,4 +57,4 @@ class Qedft {
 
 } // namespace qe_dft
 
-#endif // _QE_DFT_INDEX_MATCHER_H_
+#endif // _QE_DFT_SRC_QE_DFT_H_

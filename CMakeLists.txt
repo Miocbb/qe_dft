@@ -27,34 +27,6 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(project_name qe_dft)
 project(${project_name} CXX)
 
-# download googletest if needs
-if(NOT EXISTS "${CMAKE_SOURCE_DIR}/extern/googletest")
-    # copied from google-test readme.md. See
-    # https://github.com/google/googletest/blob/master/googletest/README.md.
-    # {{{
-    # Download and unpack googletest at configure time
-    configure_file(cmake/cmake_gtest.in ${CMAKE_CURRENT_BINARY_DIR}/download/googletest/CMakeLists.txt)
-    execute_process(COMMAND ${CMAKE_COMMAND} -G "${CMAKE_GENERATOR}" .
-      RESULT_VARIABLE result
-      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/download/googletest )
-    if(result)
-      message(FATAL_ERROR "CMake step for googletest failed: ${result}")
-    endif()
-    execute_process(COMMAND ${CMAKE_COMMAND} --build .
-      RESULT_VARIABLE result
-      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/download/googletest )
-    if(result)
-      message(FATAL_ERROR "Build step for googletest failed: ${result}")
-    endif()
-endif()
-
-# Prevent overriding the parent project's compiler/linker
-# settings on Windows
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-# Add googletest directly to our build. This defines
-# the gtest and gtest_main targets.
-add_subdirectory(${CMAKE_SOURCE_DIR}/extern/googletest)
-
 # find eigen library
 find_package (Eigen3 REQUIRED NO_MODULE)
 if(Eigen3_FOUND)

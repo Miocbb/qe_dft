@@ -64,6 +64,19 @@ QedftBase::QedftBase(const vector<size_t> &nocc, SharedMatrix S,
         throw std::runtime_error("Dimension does not match between S and "
                                  "N-1 system CO coefficient matrix.");
     }
+    // check CO orthogonality.
+    for (size_t i = 0; i < 2; i++) {
+        Matrix I = (*C_N[i]).transpose() * (*S) * (*C_N[i]);
+        if (!I.isIdentity(1e-7)) {
+            throw std::runtime_error(
+                "Error: COs of N system are not orthogonal to each other.");
+        }
+        I = (*C_N_1[i]).transpose() * (*S) * (*C_N_1[i]);
+        if (!I.isIdentity(1e-7)) {
+            throw std::runtime_error("Error: COs of N-1/N+1 system are not "
+                                     "orthogonal to each other.");
+        }
+    }
 }
 
 QedftBase::MatchedOrbitalInfo QedftBase::get_corresponding_orbital(Spin spin,
@@ -77,7 +90,8 @@ QedftBase::MatchedOrbitalInfo QedftBase::get_corresponding_orbital(Spin spin,
         throw std::runtime_error(msg.str());
     }
     const size_t is = (spin == Alpha ? 0 : 1);
-    Eigen::VectorXd overlap = C_N_1_[is]->transpose() * (*S_) * C_N_[is]->col(index);
+    Eigen::VectorXd overlap =
+        C_N_1_[is]->transpose() * (*S_) * C_N_[is]->col(index);
     overlap = overlap.array().abs();
     size_t idx = std::max_element(overlap.data(), overlap.data() + nbasis) -
                  overlap.data();

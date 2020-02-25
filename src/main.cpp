@@ -65,13 +65,13 @@ bool str_find(const string &str, const string &sub_str)
  * "n1-n2" means all the excitation from HOMO->HOMO+n1 to HOMO->HOMO+n2. Each
  * expression is seperated by comma. You can make "1, 2, 2-6", which will be
  * understand as "1, 2, 3, 4, 5, 6".
- * @param [in] nocc: number of occupied orbitals.
+ * @param [in] nocc_a: number of alpha occupied orbitals in the N system.
  *
  * @return vector<size_t>: the orbital indices (starting from zero) related to
  * the expressed excitations in an increasing order. The duplicated indices are
  * removed.
  */
-vector<size_t> parse_exci_index(const string &index_expr, size_t nocc)
+vector<size_t> parse_exci_index(const string &index_expr, size_t nocc_a)
 {
     vector<string> index_expr_split = str_split(index_expr, ',');
     vector<size_t> rst;
@@ -117,7 +117,7 @@ vector<size_t> parse_exci_index(const string &index_expr, size_t nocc)
     remove_duplicates(rst);
     std::sort(rst.begin(), rst.end());
     for (size_t &i : rst) {
-        i = nocc - 1 + i;
+        i = nocc_a - 1 + i;
     }
     return rst;
 }
@@ -133,23 +133,31 @@ po::variables_map parse_args(int ac, char *av[])
         "supported.(1). \"n\" means the HOMO->HOMO+n excitation; (2) \"n1-n2\" "
         "means all the excitation from HOMO->HOMO+n1 to HOMO->HOMO+n2. Each "
         "expression is ONLY seperated by comma.You can make \"1,2,2-6\", which "
-        "will "
-        "be understand as \"1,2,3,4,5,6\".")(
-        "nocc", po::value<size_t>()->required(),
-        "number of occupied orbital.")(
+        "will be understand as \"1,2,3,4,5,6\".")(
+        "overlap_check", po::value<bool>()->default_value(true),
+        "If or not doing overlap check to selecting orbitals. Default=true.")(
+        "nocc_a", po::value<size_t>()->required(),
+        "number of alpha occupied orbital for the N system.")(
+        "nocc_b", po::value<size_t>()->required(),
+        "number of beta occupied orbital for the N system.")(
+        "rm_or_add", po::value<string>()->required(),
+        "Doing N-1 or N+1 QE-DFT calculation. Only choices are \"N-1\" or "
+        "\"N+1\".")(
         "file_CO_N", po::value<string>()->required(),
-        "Binary file generated from QM4D for CO coefficient matrix from "
+        "Text file generated from QM4D for CO coefficient matrix from "
         "N-electron system.")(
         "file_CO_Nrm", po::value<string>()->required(),
-        "Binary file generated from QM4D for CO coefficient matrix from "
+        "Text file generated from QM4D for CO coefficient matrix from "
         "(N-1)-electron system.")(
         "file_S", po::value<string>()->required(),
-        "Binary file generated from QM4D for AO overlap matrix.")(
+        "Text file generated from QM4D for AO overlap matrix.")(
         "file_eig_Nrm", po::value<string>()->required(),
-        "Binary file generated from QM4D for orbital energy matrix.");
+        "Text file generated from QM4D for orbital energy matrix.");
 
     po::positional_options_description pst_args;
-    pst_args.add("nocc", 1);
+    pst_args.add("nocc_a", 1);
+    pst_args.add("nocc_b", 1);
+    pst_args.add("rm_or_add", 1);
     pst_args.add("file_CO_N", 1);
     pst_args.add("file_CO_Nrm", 1);
     pst_args.add("file_S", 1);
@@ -167,17 +175,25 @@ po::variables_map parse_args(int ac, char *av[])
             // http://www.radmangames.com/programming/how-to-use-boost-program_options
             rad::OptionPrinter::printStandardAppDesc(appName, std::cout, args,
                                                      &pst_args);
-            return 0;
+            std::exit(EXIT_SUCCESS);
+        }
+
+        const string rm_or_add = vm["rm_or_add"].as<string>();
+        if (rm_or_add != "N-1" && rm_or_add != "N+1") {
+            throw std::runtime_error(
+                "Error to set N-1 or N+1 QE-DFT calculation. Supported setting "
+                "is \"N-1\" or \"N+1\".");
         }
 
         po::notify(vm);
     } catch (...) {
         throw;
     }
+
     return vm;
 }
 
-} // local namespace
+} // namespace
 
 int main(int ac, char *av[])
 {
@@ -187,12 +203,20 @@ int main(int ac, char *av[])
     // load data
     string file_S = vm["file_S"].as<string>();
     string file_C_ref = vm["file_CO_N"].as<string>();
-    string file_C_remove  = vm["file_CO_Nrm"].as<string>();
+    string file_C_remove = vm["file_CO_Nrm"].as<string>();
     string file_OrbE_N_1 = vm["file_eig_Nrm"].as<string>();
     string index_options = vm["index"].as<string>();
-    const size_t nocc = vm["nocc"].as<size_t>();
+    const vector<size_t> nocc = {vm["nocc_a"].as<size_t>(),
+                                 vm["nocc_b"].as<size_t>()};
+    // alpha electron number should be greater or equal to beta electron number.
+    if (nocc[0] < nocc[1]) {
+        throw std::runtime_error(
+            "Error: alpha electron number should be greater or equal to beta "
+            "electron number! You need to modify your all input matrix data to "
+            "meet this criteria!");
+    }
 
-    vector<size_t> indices = parse_exci_index(index_options, nocc);
+    vector<size_t> indices = parse_exci_index(index_options, nocc[0]);
     std::cout << "Excited orbitals: \n";
     for (size_t i = 0; i < indices.size(); ++i) {
         std::cout << indices[i] + 1 << ",";
@@ -232,34 +256,86 @@ int main(int ac, char *av[])
         C_N_1[i]->transposeInPlace();
     }
 
-#ifdef DEBUG_PRINT
-    std::cout << "Overlap matrix:\n" << *S << std::endl;
-    std::cout << "CO coef matrix N system: spin=0\n" << *C_N[0] << std::endl;
-    std::cout << "CO coef matrix N system: spin=1\n" << *C_N[1] << std::endl;
-    std::cout << "CO coef matrix N-1 system: spin=0\n"
-              << *C_N_1[0] << std::endl;
-    std::cout << "CO coef matrix N-1 system: spin=1\n"
-              << *C_N_1[1] << std::endl;
-    std::cout << "Orbital energy matrix for N-1 system: \n"
-              << *orbE_N_1 << std::endl;
-#endif
+    if (vm["rm_or_add"].as<string>() == "N-1") {
+        bool is_open_shell = (nocc[0] == nocc[1]);
+        if (is_open_shell) {
+            // open-shell N-1 system.
+            qe_dft::QedftRemovalOpenShell qedft(nocc, S, C_N, C_N_1, orbE_N_1);
+            for (size_t exci_idx : indices) {
+                size_t gs_orb_b = qedft.gs_orbital_index();
 
-    // do QE-DFT calculation.
-    qe_dft::Qedft orbitals(nocc, S, C_N, C_N_1, orbE_N_1);
-    // find corrsponding indices in N-1 system for the N system excitation.
-    auto matched_index_pair = orbitals.get_corresponding_orbitals(indices);
-    for (size_t i = 0; i < indices.size(); ++i) {
-        printf("Input index=%zu, find index: alpha=%zu, beta=%zu\n", indices[i],
-               matched_index_pair[i].first, matched_index_pair[i].second);
-    }
-    // calculate excitation energy with the corresponding indices.
-    auto exciE_pair = orbitals.excitation_energies(indices);
-    for (size_t i = 0; i < indices.size(); ++i) {
-        printf("Excitation: %zu->%zu. Used orbital: %zu->(alpha=%zu, "
-               "beta=%zu). Singlet = %.3f (eV), Triplet = %.3f (eV)\n",
-               nocc, indices[i] + 1, nocc,
-               matched_index_pair[i].first + 1,
-               matched_index_pair[i].second + 1, exciE_pair[i].first * au2eV,
-               exciE_pair[i].second * au2eV);
+                // do QE-DFT without overlap checking.
+                double E_s_nocheck =
+                    qedft.get_singlet_excitation(gs_orb_b, exci_idx, exci_idx);
+                double E_t_nocheck =
+                    qedft.get_triplet_excitation(gs_orb_b, exci_idx);
+                printf("Excitation without orbital checking: %zu->%zu. Singlet "
+                       "= %.3f (eV), Triplet = %.3f (eV)\n",
+                       gs_orb_b + 1, exci_idx + 1, E_s_nocheck * au2eV,
+                       E_t_nocheck * au2eV);
+
+                // do QE-DFT with overlap checking.
+                if (vm["overlap_check"].as<bool>()) {
+                    auto used_gs_orb_b =
+                        qedft.get_corresponding_orbital(qe_dft::Beta, gs_orb_b);
+                    auto used_exci_orb_a = qedft.get_corresponding_orbital(
+                        qe_dft::Alpha, exci_idx);
+                    auto used_exci_orb_b =
+                        qedft.get_corresponding_orbital(qe_dft::Beta, exci_idx);
+                    double E_s = qedft.get_singlet_excitation(
+                        used_gs_orb_b.first, used_exci_orb_a.first,
+                        used_exci_orb_b.first);
+                    double E_t = qedft.get_triplet_excitation(
+                        used_gs_orb_b.first, used_exci_orb_a.first);
+                    printf(
+                        "Excitation with orbital checking: %zu->%zu. Singlet = "
+                        "%.3f (eV), Triplet = %.3f (eV)\n",
+                        gs_orb_b + 1, exci_idx + 1, E_s * au2eV, E_t * au2eV);
+                    printf("Used orbital to ground state:  spin = beta,  idx = "
+                           "%3zu, overlap = %.3f\n",
+                           used_gs_orb_b.first + 1, used_gs_orb_b.second);
+                    printf("Used orbital to excited state: spin = alpha, idx = "
+                           "%3zu, overlap = %.3f\n",
+                           used_exci_orb_a.first + 1, used_exci_orb_a.second);
+                    printf("Used orbital to excited state: spin = beta,  idx = "
+                           "%3zu, overlap = %.3f\n",
+                           used_exci_orb_b.first + 1, used_exci_orb_b.second);
+                }
+                printf("\n");
+            }
+        } else {
+            // close-shell N-1 system.
+            qe_dft::QedftRemovalCloseShell qedft(nocc, S, C_N, C_N_1, orbE_N_1);
+            for (size_t exci_idx : indices) {
+                size_t gs_orb_a = qedft.gs_orbital_index();
+
+                // do QE-DFT without overlap checking.
+                double E_d_nocheck =
+                    qedft.get_doublet_excitation(gs_orb_a, exci_idx);
+                printf("Excitation without orbital checking: %zu->%zu. Doublet "
+                       "= %.3f (eV)\n",
+                       gs_orb_a + 1, exci_idx + 1, E_d_nocheck * au2eV);
+
+                if (vm["overlap_check"].as<bool>()) {
+                    auto used_gs_orb_a = qedft.get_corresponding_orbital(
+                        qe_dft::Alpha, gs_orb_a);
+                    auto used_exci_orb_a = qedft.get_corresponding_orbital(
+                        qe_dft::Alpha, exci_idx);
+                    double E_d = qedft.get_doublet_excitation(
+                        used_gs_orb_a.first, used_exci_orb_a.first);
+                    printf("Excitation: %zu->%zu. Doublet = %.3f (eV)\n",
+                           gs_orb_a + 1, exci_idx + 1, E_d * au2eV);
+                    printf("Used orbital to ground state:  spin = alpha, idx = "
+                           "%3zu, overlap = %.3f\n",
+                           used_gs_orb_a.first + 1, used_gs_orb_a.second);
+                    printf("Used orbital to excited state: spin = alpha, idx = "
+                           "%3zu, overlap = %.3f\n",
+                           used_exci_orb_a.first + 1, used_exci_orb_a.second);
+                }
+                printf("\n");
+            }
+        }
+    } else {
+        throw std::runtime_error("N+1 QE-DFT is not implemented.\n");
     }
 }

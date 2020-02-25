@@ -7,10 +7,22 @@
 
 namespace qe_dft {
 
-Qedft::Qedft(size_t nocc, SharedMatrix S, vector<SharedMatrix> C_N,
-             vector<SharedMatrix> C_N_1, SharedMatrix eig_N_1)
+QedftBase::QedftBase(const vector<size_t> &nocc, SharedMatrix S,
+                     vector<SharedMatrix> C_N, vector<SharedMatrix> C_N_1,
+                     SharedMatrix eig_N_1)
     : nocc_{nocc}, S_{S}, C_N_{C_N}, C_N_1_{C_N_1}, eig_N_1_{eig_N_1}
 {
+    // check electron number
+    if (nocc.size() != 2) {
+        throw std::runtime_error(
+            "Incomplete information for alpha and beta "
+            "occupied orbitals number for N-1/N+1 system.");
+    }
+    if (nocc[0] < nocc[1]) {
+        throw std::runtime_error(
+            "Alpha electron number should be greater or equal to beta electron "
+            "number.");
+    }
     // check unrestricted calculation.
     if (C_N_.size() != 2) {
         throw std::runtime_error("miss one spin of CO coefficient matrix "
@@ -54,69 +66,22 @@ Qedft::Qedft(size_t nocc, SharedMatrix S, vector<SharedMatrix> C_N,
     }
 }
 
-OrbIndexPair Qedft::get_corresponding_orbitals(size_t index)
+QedftBase::MatchedOrbitalInfo QedftBase::get_corresponding_orbital(Spin spin,
+                                                                   size_t index)
 {
     const size_t nbasis = S_->rows();
-
     if (index >= nbasis) {
         std::stringstream msg;
         msg << "Input index = " << index
             << ", which exceeds the basis dimension.";
         throw std::runtime_error(msg.str());
     }
-
-    vector<size_t> rst_idx_vec;
-    for (size_t s = 0; s < 2; ++s) {
-        Matrix orb_overlap =
-            C_N_1_[s]->transpose() * (*S_) * C_N_[s]->col(index);
-        orb_overlap = orb_overlap.array().abs();
-        size_t idx =
-            std::max_element(orb_overlap.data(), orb_overlap.data() + nbasis) -
-            orb_overlap.data();
-        rst_idx_vec.push_back(idx);
-
-#ifdef DEBUG_PRINT
-        std::cout << "Orbital [" << index
-                  << "] overlap with N-1 all alpha orbitals:\n"
-                  << orb_overlap.transpose() << std::endl;
-#endif
-    }
-    return OrbIndexPair(rst_idx_vec[0], rst_idx_vec[1]);
-}
-
-vector<OrbIndexPair> Qedft::get_corresponding_orbitals(vector<size_t> indices)
-{
-    vector<OrbIndexPair> rst;
-    for (auto idx : indices) {
-        rst.push_back(get_corresponding_orbitals(idx));
-    }
-    return rst;
-}
-
-ExciEnergyPair Qedft::excitation_energies(size_t index)
-{
-    if (index < nocc_) {
-        throw std::runtime_error("Wrong excitation index. QEDFT only cover "
-                                 "HOMO -> LUMO + (i) excitations.");
-    }
-
-    auto idx_pair = get_corresponding_orbitals(index);
-    const double ref = eig_N_1_->row(1)[nocc_ - 1]; // beta lumo
-    const double exci_a = eig_N_1_->row(0)[idx_pair.first];
-    const double exci_b = eig_N_1_->row(1)[idx_pair.second];
-
-    double exci_S = 2 * exci_b - exci_a - ref;
-    double exci_T = exci_a - ref;
-    return ExciEnergyPair(exci_S, exci_T);
-}
-
-vector<ExciEnergyPair> Qedft::excitation_energies(vector<size_t> indices)
-{
-    vector<ExciEnergyPair> rst;
-    for (auto idx : indices) {
-        rst.push_back(excitation_energies(idx));
-    }
-    return rst;
+    const size_t is = (spin == Alpha ? 0 : 1);
+    Eigen::VectorXd overlap = C_N_1_[is]->transpose() * (*S_) * C_N_[is]->col(index);
+    overlap = overlap.array().abs();
+    size_t idx = std::max_element(overlap.data(), overlap.data() + nbasis) -
+                 overlap.data();
+    return std::make_pair(idx, overlap(idx));
 }
 
 } // namespace qe_dft
